@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 from magpylib3._lib.math_utility.utility import rotobj_from_angax
 from magpylib3._lib.graphics import display
+from contextlib import contextmanager
 
 
 class BaseGeo:
@@ -29,7 +30,9 @@ class BaseGeo:
     ### Returns:
     - BaseGeo object
     """
-
+    _default_steps = -1
+    _set_first_steps = False
+    
     def __init__(self, pos, rot):
         # set pos and orient attributes
         self.pos = pos
@@ -89,11 +92,11 @@ class BaseGeo:
         """
         if input is None:                                           # None input generates unit rotation
             path_length = len(self._pos)
-            self._rot = R.from_quat([(0,0,0,1)]*path_length, normalized=True)
+            self._rot = R.from_quat([(0,0,0,1)]*path_length)
         else:                                                       # single rotation - increase dimension to (1,3)
             val = input.as_quat()
             if val.ndim == 1:
-                self._rot = R.from_quat([val], normalized=True)
+                self._rot = R.from_quat([val])
             else:                                                   # multi rotation
                 self._rot = input
 
@@ -134,7 +137,7 @@ class BaseGeo:
             show_path=show_path)
 
 
-    def move_by(self, displacement, steps=-1):
+    def move_by(self, displacement, steps=None):
         """ Linear displacement of object
 
         Parameters
@@ -154,6 +157,11 @@ class BaseGeo:
         self : object with position and orientation properties.
 
         """
+        if steps is None:
+            steps = self._default_steps
+        if self._set_first_steps:
+            steps *= -1
+            self._set_first_steps = False
         # secure input
         displ = np.array(displacement, dtype=float)
         
@@ -177,7 +185,7 @@ class BaseGeo:
             addpath_rot = np.tile(path_rot[-1],(steps,1))
             # set new path
             self.pos = np.r_[path_pos, addpath_pos + path_pos[-1]]
-            self.rot = R(np.r_[path_rot, addpath_rot], normalized=True)
+            self.rot = R(np.r_[path_rot, addpath_rot],)
         else:
             # apply operation on top of path[steps:]
             self._pos[steps:] = path_pos[steps:] + addpath_pos
@@ -185,7 +193,7 @@ class BaseGeo:
         return self
 
 
-    def rotate(self, rot:R, anchor=None, steps=-1):    
+    def rotate(self, rot:R, anchor=None, steps=None):    
         """ Object rotation
 
         Parameters
@@ -208,6 +216,11 @@ class BaseGeo:
         self : object with position and orientation properties.
 
         """
+        if steps is None:
+            steps = self._default_steps
+        if self._set_first_steps:
+            steps *= -1
+            self._set_first_steps = False
         # secure input type
         if anchor is not None:
             anchor = np.array(anchor, dtype=float)      # if None
@@ -229,7 +242,7 @@ class BaseGeo:
         if steps > 0:
             # apply rot to path[-1] and add resulting vector to path
             rot_new = rots*self._rot[-1]                  
-            self.rot = R(np.r_[path_rot, rot_new.as_quat()], normalized=True)
+            self.rot = R(np.r_[path_rot, rot_new.as_quat()],)
             # compute positions and add to path
             if anchor is not None:
                 pos_new = rots.apply(path_pos[-1]-anchor) + anchor
@@ -240,7 +253,7 @@ class BaseGeo:
         else:
             # apply rotation to path[steps:] and apply result to path[steps:]
             rot_new = rots*self.rot[steps:]
-            self.rot = R(np.r_[path_rot[:steps], rot_new.as_quat()], normalized=True)
+            self.rot = R(np.r_[path_rot[:steps], rot_new.as_quat()],)
             if anchor is not None:
                 pos_new = rots.apply(path_pos[steps:]-anchor) + anchor      # rotate about anchor
                 self._pos[steps:] = pos_new
@@ -248,7 +261,7 @@ class BaseGeo:
         return self
 
 
-    def rotate_from_angax(self, angle, axis, anchor=None, steps=-1, degree=True):
+    def rotate_from_angax(self, angle, axis, anchor=None, steps=None, degree=True):
         """ Object rotation from angle-axis combination
 
         Parameters
@@ -278,6 +291,12 @@ class BaseGeo:
         self : object with position and orientation properties.
         
         """
+
+        if steps is None:
+            steps = self._default_steps
+        if self._set_first_steps:
+            steps *= -1
+            self._set_first_steps = False
         # degree to rad
         if degree:
             angle = angle/180*np.pi
@@ -315,3 +334,26 @@ class BaseGeo:
                 self.rotate(rot_pi, anchor, -abs(steps))
         
         return self
+
+    @contextmanager
+    def merge_paths(self, steps):
+        '''
+        example:
+        --------
+        from magpylib3.magnet import Box
+        b = Box(mag=(0, 0, 1), dim=(1, 1, 1))
+        b.move_by((5,0,0))
+        with b.merge_paths(steps=100):
+            b.rotate_from_angax(720, 'z', anchor=(0,0,0))
+            b.move_by((0,0,10))
+            b.move_by((10,0,0))
+        b.display(show_path=True)
+        '''
+
+        assert steps>1, 'steps must be > 1'
+        self._default_steps = -steps
+        self._set_first_steps = True
+        yield self
+        self._default_steps = -1
+        self._set_first_steps = False
+        
